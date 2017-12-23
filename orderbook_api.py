@@ -33,21 +33,25 @@ product_list = ["BTC-USD","ETH-USD","LTC-USD","ETH-BTC","LTC-BTC"]
 def is_valid_transition(a, b, product_list):
     return '{}-{}'.format(a, b) in product_list or '{}-{}'.format(b, a) in product_list
 
-def trade_stats(base_currency, base_number, next_currency, order_book_map): # TODO: add outstanding volume at bid/ask price for time calculation
+def trade_stats(base_currency, base_number, next_currency, order_book_map, volume_map): # TODO: add outstanding volume at bid/ask price for time calculation
     trade = '{}-{}'.format(base_currency, next_currency)
+    trade_arbitrage = 1
+    trade_time = 0
     if trade not in order_book_map:
         trade = '{}-{}'.format(next_currency, base_currency)
         order_book = order_book_map[trade]
-        price = order_book.get_bid()
-        next_number = (base_number / price)//coin_increments[next_currency] * coin_incremenets[next_currency]
+        print("OB id: {}".format(order_book.product_id))
+        price = float(order_book.get_bid())
+        next_number = (base_number / price)//coin_increments[next_currency] * coin_increments[next_currency]
         trade_arbitrage /= price
         trade_time = next_number / volume_map[trade]
     else:
         order_book = order_book_map[trade]
-        price = order_book.get_bid()
+        print("OB id: {}".format(order_book.product_id))
+        price = float(order_book.get_bid())
         next_number = (base_number * price)//coin_increments[base_currency] * coin_increments[base_currency]
         trade_arbitrage *= price
-        trade_time = number / volume_map[trade]
+        trade_time = base_number / volume_map[trade]
 
     return trade_arbitrage, trade_time, next_number
 
@@ -58,7 +62,7 @@ def loop_profit(loop, base_number, order_book_map, volume_map):
     intermediate_number = base_number
     print("Loop: {}, Volume: {}".format(loop, base_number))
     for base_currency, next_currency in pairwise(loop):
-        trade_arbitrage, trade_time, trade_number = trade_stats(base_currency, intermediate_number, next_currency, order_book_map)
+        trade_arbitrage, trade_time, trade_number = trade_stats(base_currency, intermediate_number, next_currency, order_book_map, volume_map)
         loop_arbitrage *= trade_arbitrage
         loop_time += trade_time
         intermediate_number = trade_number
@@ -85,6 +89,7 @@ def next_move(starting_with, number, order_book_map, volume_map, product_list):
         return None
 
 def make_trade(product_id, price, size):
+    # "FYI, you will never be charged a fee if you use the post_only option with limit orders" (I found this quote on gdax discussion)
     print("product: {}, price: {}, size: {}")
 
 def get_api_credentials(api_credential_file = 'api_credentials.json', sandbox = False):
@@ -120,6 +125,9 @@ def run():
     # coin_increments = public_client.get_product_increments() # TODO: this call doesn't exist, but I'd like to do it programmatically
 
     order_book_map = {k:gdax.OrderBook(product_id=k) for k in product_list}
+    for obm_entry in order_book_map.values():
+        obm_entry.start()
+
     volume_map = make_volume_map(order_book_map, public_client)
 
     while True:
@@ -133,9 +141,6 @@ def run():
             next_step = next_move(coin, number, order_book_map, volume_map, product_list)
             if next_step:
                 next_trades.append((coin, number, next_step[0], next_step[1]))
-
-        import ipdb; ipdb.set_trace()
-        next_trades.sort(key=lambda x: x[3], reverse = True)
 
         for entry in next_trades:
             make_trade(entry, _, number) # TODO: need to pipe price out of path evalutation so we can set trade price
