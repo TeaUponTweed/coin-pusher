@@ -140,7 +140,7 @@ class newWebsocket(gdax.WebsocketClient):
 
 def run():
 
-    auth_client = gdax.AuthenticatedClient(*get_api_credentials())
+    # auth_client = gdax.AuthenticatedClient(*get_api_credentials())
     public_client = gdax.PublicClient()
     wsClient = newWebsocket(products = ["BTC-USD","ETH-USD","LTC-USD","ETH-BTC","LTC-BTC"])
     wsClient.start()
@@ -168,7 +168,7 @@ def run():
             make_trade(entry, _, number) # TODO: need to pipe price out of path evalutation so we can set trade price
 
         time.sleep(1)
-        auth_client.cancel_all_trades() # TODO: this doesn't exist
+        # auth_client.cancel_all_trades() # TODO: this doesn't exist
     wsClient.close()
 
 if __name__ == "__main__":
