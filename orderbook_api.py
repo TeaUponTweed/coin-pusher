@@ -83,18 +83,20 @@ def trade_stats(base_currency, base_number, next_currency, wsClient, volume_map)
     trade_time = 0
     if trade not in wsClient.products:
         trade = '{}-{}'.format(next_currency, base_currency)
-        price = float(wsClient.get_bid(trade))
+        price, existing_number = wsClient.get_bid(trade)
+        # print("Buy: {}, price: {}, existing_amount: {}".format(trade, price, existing_number))
         next_number = (base_number / price)//coin_increments[next_currency] * coin_increments[next_currency]
         trade_arbitrage /= price
-        trade_time = next_number / volume_map[trade]
+        trade_time = (next_number + existing_number) / volume_map[trade]
         if trade_time == 0:
             print("Case 1")
             print("Trade: {}, price: {}, base_number: {}, next_number: {}, time: {}".format(trade, price, base_number, next_number, trade_time))
     else:
-        price = float(wsClient.get_ask(trade))
+        price, existing_number = wsClient.get_ask(trade)
+        # print("Sell: {}, price: {}, existing_amount: {}".format(trade, price, existing_number))
         next_number = (base_number * price)//coin_increments[base_currency] * coin_increments[base_currency]
         trade_arbitrage *= price
-        trade_time = base_number / volume_map[trade]
+        trade_time = (base_number + existing_number) / volume_map[trade]
         if trade_time == 0:
             print("Case 2")
             print("Trade: {}, price: {}, base_number: {}, next_number: {}, time: {}".format(trade, price, base_number, next_number, trade_time))
@@ -116,7 +118,7 @@ def loop_profit(loop, base_number, wsClient, volume_map):
         loop_time += trade_time
         intermediate_number = trade_number
     trade_value = (loop_arbitrage - 1) / loop_time
-    print("loop_arbitrage: {}, time: {} -> value: {}".format(loop_arbitrage, loop_time, trade_value))
+    print("loop: {}, loop_arbitrage: {}, time: {} -> value: {}".format(loop, loop_arbitrage, loop_time, trade_value * 1e7))
     return trade_value, price
 
 def make_volume_map(products, public_client):
@@ -188,24 +190,30 @@ class newWebsocket(gdax.WebsocketClient):
     def get_bid(self, product_id):
         if product_id in self.products:
             try:
-                bid = self.order_book_map[product_id].get_bid()
-                return bid
+                order_book = self.order_book_map[product_id]
+                price = order_book.get_bid()
+                bids = order_book.get_bids(price)
+                amount = sum(float(entry['size']) for entry in bids)
+                # print("bid price: {}, amount: {}".format(price, amount))
+                return float(price), amount
             except:
                 print("Couldn't get bid")
                 return None
-            # print("{} max bid: {}".format(product_id, bid))
         else:
             print("Unexpected product in message: {}".format(product_id))
 
     def get_ask(self, product_id):
         if product_id in self.products:
             try:
-                ask = self.order_book_map[product_id].get_ask()
-                return ask
+                order_book = self.order_book_map[product_id]
+                price = order_book.get_ask()
+                asks = order_book.get_asks(price)
+                amount = sum(float(entry['size']) for entry in asks)
+                # print("ask price: {}, amount: {}".format(price, amount))
+                return float(price), amount
             except:
                 print("Couldn't get ask")
                 return None
-            # print("{} max bid: {}".format(product_id, ask))
         else:
             print("Unexpected product in message: {}".format(product_id))
 
@@ -223,7 +231,7 @@ def run():
 
     time.sleep(10)
 
-    for _ in range(10):
+    for _ in range(1):
         # account_dict = {account['currency']:float(account['available']) for account in auth_client.get_accounts()}
         account_dict = {'ETH': 1.5, 'BTC': 0.05, 'USD': 1000.0, 'LTC': 3.0, 'BCH': 0.5} # Test
         print("Account: {}".format(account_dict))
