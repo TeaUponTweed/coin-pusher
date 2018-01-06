@@ -5,6 +5,48 @@ from itertools import tee
 import json
 import time
 
+loops = {
+        "USD" : [
+            ['USD','BTC','USD'],
+            ['USD','LTC','USD'],
+            ['USD','ETH','USD'],
+            ['USD','BTC','ETH','USD'],
+            ['USD','BTC','LTC','USD'],
+            ['USD','ETH','BTC','USD'],
+            ['USD','LTC','BTC','USD'],
+            ['USD','LTC','BTC','ETH','USD'],
+            ['USD','ETH','BTC','LTC','USD'],
+            ],
+        "BTC" : [
+            ['BTC','USD','BTC'],
+            ['BTC','LTC','BTC'],
+            ['BTC','ETH','BTC'],
+            ['BTC','ETH','USD','BTC'],
+            ['BTC','LTC','USD','BTC'],
+            ['BTC','USD','ETH','BTC'],
+            ['BTC','USD','LTC','BTC'],
+            ['BTC','LTC','USD','ETH','BTC'],
+            ['BTC','ETH','USD','LTC','BTC'],
+            ],
+        "ETH" : [
+            ['ETH','USD','ETH'],
+            ['ETH','BTC','ETH'],
+            ['ETH','USD','BTC','ETH'],
+            ['ETH','BTC','USD','ETH'],
+            ['ETH','USD','LTC','BTC','ETH'],
+            ['ETH','BTC','LTC','USD','ETH'],
+            ],
+        "LTC" : [
+            ['LTC','USD','LTC'],
+            ['LTC','BTC','LTC'],
+            ['LTC','USD','BTC','LTC'],
+            ['LTC','BTC','USD','LTC'],
+            ['LTC','USD','ETH','BTC','LTC'],
+            ['LTC','BTC','ETH','USD','LTC'],
+            ]
+        }
+
+
 def pairwise(iterable):
     "s -> (s0,s1), (s1,s2), (s2, s3), ..."
     a, b = tee(iterable)
@@ -28,6 +70,7 @@ coin_increments = {
     'ETH': 0.001,
     'LTC': 0.01
 }
+
 all_coins = list(coin_increments)
 product_list = ["BTC-USD","ETH-USD","LTC-USD","ETH-BTC","LTC-BTC"]
 
@@ -44,27 +87,37 @@ def trade_stats(base_currency, base_number, next_currency, wsClient, volume_map)
         next_number = (base_number / price)//coin_increments[next_currency] * coin_increments[next_currency]
         trade_arbitrage /= price
         trade_time = next_number / volume_map[trade]
+        if trade_time == 0:
+            print("Case 1")
+            print("Trade: {}, price: {}, base_number: {}, next_number: {}, time: {}".format(trade, price, base_number, next_number, trade_time))
     else:
-        price = float(wsClient.get_bid(trade))
+        price = float(wsClient.get_ask(trade))
         next_number = (base_number * price)//coin_increments[base_currency] * coin_increments[base_currency]
         trade_arbitrage *= price
         trade_time = base_number / volume_map[trade]
+        if trade_time == 0:
+            print("Case 2")
+            print("Trade: {}, price: {}, base_number: {}, next_number: {}, time: {}".format(trade, price, base_number, next_number, trade_time))
 
-    return trade_arbitrage, trade_time, next_number
+    return trade_arbitrage, trade_time, next_number, price
 
 def loop_profit(loop, base_number, wsClient, volume_map):
-    loop.append(loop[0])
+    # loop.append(loop[0])
     loop_arbitrage = 1.0
     loop_time = 0.0
     intermediate_number = base_number
-    print("Loop: {}, Volume: {}".format(loop, base_number))
+    # print("Loop: {}, Volume: {}".format(loop, base_number))
+    price = None
     for base_currency, next_currency in pairwise(loop):
-        trade_arbitrage, trade_time, trade_number = trade_stats(base_currency, intermediate_number, next_currency, wsClient, volume_map)
+        trade_arbitrage, trade_time, trade_number, trade_price = trade_stats(base_currency, intermediate_number, next_currency, wsClient, volume_map)
+        if not price:
+            price = trade_price
         loop_arbitrage *= trade_arbitrage
         loop_time += trade_time
         intermediate_number = trade_number
-    print("loop_arbitrage: {}, time: {}".format(loop_arbitrage, loop_time))
-    return (loop_arbitrage - 1) / loop_time
+    trade_value = (loop_arbitrage - 1) / loop_time
+    print("loop_arbitrage: {}, time: {} -> value: {}".format(loop_arbitrage, loop_time, trade_value))
+    return trade_value, price
 
 def make_volume_map(products, public_client):
     volume_map = {}
@@ -77,17 +130,27 @@ def make_volume_map(products, public_client):
 def next_move(starting_with, number, wsClient, volume_map, product_list):
     def f(path):
         return loop_profit(path, number, wsClient, volume_map)
-    all_paths = list(SimpleNodeVisitor([starting_with]))[1:] # Is there a better way to avoid the loop of lenth 1?
-    print("All paths: {}".format(all_paths))
-    profit, path = max(zip(map(f, all_paths), all_paths), key=lambda x: x[0])
-    if profit > 0:
-        return (path[1], profit)
+    # all_paths = list(SimpleNodeVisitor([starting_with]))[1:] # Is there a better way to avoid the loop of lenth 1?
+    all_paths = loops[starting_with]
+    # print("All paths: {}".format(all_paths))
+    profit, path = max(zip(map(f, all_paths), all_paths), key=lambda x: x[0][0])
+    if profit[0] > 0:
+        return path[1], profit[0], profit[1]
     else:
-        return None
+        return None, None, None
 
-def make_trade(product_id, price, size):
+def make_trade(base_coin, number, next_coin, price, wsClient, auth_client = None):
     # "FYI, you will never be charged a fee if you use the post_only option with limit orders" (I found this quote on gdax discussion)
-    print("product: {}, price: {}, size: {}")
+    trade = '{}-{}'.format(base_coin, next_coin)
+    if trade in wsClient.products:
+        print("Sell {} {} at {}".format(number, trade, price))
+        if auth_client:
+            auth_client.buy(price=price, size=number, product_id=trade, post_only=True, time_in_force="GTT", cancel_after=[1,0,0]) # Candel order after 1 minute
+    else:
+        trade = '{}-{}'.format(next_coin, base_coin)
+        print("Buy {} {} at {}".format(number, trade, price))
+        if auth_client:
+            auth_client.sell(price=price, size=number, product_id=trade, post_only=True, time_in_force="GTT", cancel_after=[1,0,0]) # Cancel order after 1 minute
 
 def get_api_credentials(api_credential_file = 'api_credentials.json', sandbox = False):
     with open(api_credential_file) as api_json:
@@ -124,17 +187,25 @@ class newWebsocket(gdax.WebsocketClient):
 
     def get_bid(self, product_id):
         if product_id in self.products:
-            bid = self.order_book_map[product_id].get_bid()
+            try:
+                bid = self.order_book_map[product_id].get_bid()
+                return bid
+            except:
+                print("Couldn't get bid")
+                return None
             # print("{} max bid: {}".format(product_id, bid))
-            return bid
         else:
             print("Unexpected product in message: {}".format(product_id))
 
     def get_ask(self, product_id):
         if product_id in self.products:
-            ask = self.order_book_map[product_id].get_ask()
-            print("{} max bid: {}".format(product_id, ask))
-            return ask
+            try:
+                ask = self.order_book_map[product_id].get_ask()
+                return ask
+            except:
+                print("Couldn't get ask")
+                return None
+            # print("{} max bid: {}".format(product_id, ask))
         else:
             print("Unexpected product in message: {}".format(product_id))
 
@@ -154,21 +225,23 @@ def run():
 
     for _ in range(10):
         # account_dict = {account['currency']:float(account['available']) for account in auth_client.get_accounts()}
-        account_dict = {'ETH': 1.0, 'BTC': 1.0, 'USD': 2.4, 'LTC': 1.0, 'BCH': 1.0} # Test
+        account_dict = {'ETH': 1.5, 'BTC': 0.05, 'USD': 1000.0, 'LTC': 3.0, 'BCH': 0.5} # Test
         print("Account: {}".format(account_dict))
 
         next_trades = []
 
         for coin, number in account_dict.items():
-            next_step = next_move(coin, number, wsClient, volume_map, product_list)
-            if next_step:
-                next_trades.append((coin, number, next_step[0], next_step[1]))
+            if coin in all_coins:
+                next_step, profit, price = next_move(coin, number, wsClient, volume_map, product_list)
+                if next_step:
+                    next_trades.append((coin, number, next_step, price))
 
-        for entry in next_trades:
-            make_trade(entry, _, number) # TODO: need to pipe price out of path evalutation so we can set trade price
+        for base_coin, number, next_coin, price in next_trades:
+            # make_trade(base_coin, number, next_coin, price, wsClient, auth_client)
+            make_trade(base_coin, number, next_coin, price, wsClient)
 
         time.sleep(1)
-        # auth_client.cancel_all_trades() # TODO: this doesn't exist
+        # auth_client.cancel_all()
     wsClient.close()
 
 if __name__ == "__main__":
