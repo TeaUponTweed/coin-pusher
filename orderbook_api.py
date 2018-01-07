@@ -118,7 +118,7 @@ def loop_profit(loop, base_number, wsClient, volume_map):
         loop_time += trade_time
         intermediate_number = trade_number
     trade_value = (loop_arbitrage - 1) / loop_time
-    print("loop: {}, loop_arbitrage: {}, time: {} -> value: {}".format(loop, loop_arbitrage, loop_time, trade_value * 1e7))
+    print("loop: {}, loop_arbitrage: {}, time: {} -> value: {}".format(loop, loop_arbitrage, loop_time, trade_value * 1e6))
     return trade_value, price
 
 def make_volume_map(products, public_client):
@@ -170,6 +170,18 @@ def get_api_credentials(api_credential_file = 'api_credentials.json', sandbox = 
     api_secret = credentials["b64secret"]
 
     return api_key, api_secret, api_passphrase
+
+def get_account_value_usd(account_dict, wsClient):
+    # account_dict = {'ETH': 1.5, 'BTC': 0.05, 'USD': 1000.0, 'LTC': 3.0, 'BCH': 0.5}
+    total = 0.0
+    for currency, amount in account_dict.items():
+        if currency == "USD":
+            total += amount
+        elif currency in all_coins:
+            currency_pair = '{}-USD'.format(currency)
+            price, _ = wsClient.get_ask(currency_pair)
+            total += price * amount
+    return total
 
 class newWebsocket(gdax.WebsocketClient):
     def on_open(self):
@@ -229,17 +241,20 @@ def run():
 
     volume_map = make_volume_map(wsClient.products, public_client)
 
-    time.sleep(10)
+    time.sleep(20)
 
     for _ in range(1):
         # account_dict = {account['currency']:float(account['available']) for account in auth_client.get_accounts()}
-        account_dict = {'ETH': 1.5, 'BTC': 0.05, 'USD': 1000.0, 'LTC': 3.0, 'BCH': 0.5} # Test
+        # account_dict = {'ETH': 1.5, 'BTC': 0.05, 'USD': 1000.0, 'LTC': 3.0, 'BCH': 0.5} # Test
+        account_dict = {'ETH': 0.0, 'BTC': 0.0024, 'USD': 0.0, 'LTC': 0.0, 'BCH': 0.0} # Test
         print("Account: {}".format(account_dict))
+        current_account_value = get_account_value_usd(account_dict, wsClient)
+        print("Current value: {}".format(current_account_value))
 
         next_trades = []
 
         for coin, number in account_dict.items():
-            if coin in all_coins:
+            if coin in all_coins and number >= coin_increments[coin]:
                 next_step, profit, price = next_move(coin, number, wsClient, volume_map, product_list)
                 if next_step:
                     next_trades.append((coin, number, next_step, price))
