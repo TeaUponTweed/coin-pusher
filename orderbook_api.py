@@ -145,14 +145,17 @@ def make_trade(base_coin, number, next_coin, price, wsClient, auth_client = None
     # "FYI, you will never be charged a fee if you use the post_only option with limit orders" (I found this quote on gdax discussion)
     trade = '{}-{}'.format(base_coin, next_coin)
     if trade in wsClient.products:
-        print("Sell {} {} at {}".format(number, trade, price))
+        corrected_number = (number // coin_increments[base_coin]) * coin_increments[base_coin]
+        print("Sell {} {} at {}".format(corrected_number, trade, price))
         if auth_client:
-            auth_client.buy(price=price, size=number, product_id=trade, post_only=True, time_in_force="GTT", cancel_after=[1,0,0]) # Candel order after 1 minute
+            print(auth_client.sell(price=price, size=corrected_number, product_id=trade, post_only=True, time_in_force="GTC")) # Candel order after 1 minute
     else:
+        next_number = number / price
+        corrected_next_number = (next_number // coin_increments[next_coin]) * coin_increments[next_coin]
         trade = '{}-{}'.format(next_coin, base_coin)
-        print("Buy {} {} at {}".format(number, trade, price))
+        print("Buy {} {} at {}".format(corrected_next_number, trade, price))
         if auth_client:
-            auth_client.sell(price=price, size=number, product_id=trade, post_only=True, time_in_force="GTT", cancel_after=[1,0,0]) # Cancel order after 1 minute
+            print(auth_client.buy(price=price, size=corrected_next_number, product_id=trade, post_only=True, time_in_force="GTC")) # Cancel order after 1 minute
 
 def get_api_credentials(api_credential_file = 'api_credentials.json', sandbox = False):
     with open(api_credential_file) as api_json:
@@ -241,12 +244,12 @@ def run():
 
     volume_map = make_volume_map(wsClient.products, public_client)
 
-    time.sleep(20)
+    time.sleep(10)
 
-    for _ in range(1):
+    for _ in range(5):
         # account_dict = {account['currency']:float(account['available']) for account in auth_client.get_accounts()}
-        # account_dict = {'ETH': 1.5, 'BTC': 0.05, 'USD': 1000.0, 'LTC': 3.0, 'BCH': 0.5} # Test
-        account_dict = {'ETH': 0.0, 'BTC': 0.0024, 'USD': 0.0, 'LTC': 0.0, 'BCH': 0.0} # Test
+        account_dict = {'ETH': 1.5, 'BTC': 0.05, 'USD': 1000.0, 'LTC': 3.0, 'BCH': 0.5} # Test
+        # account_dict = {'ETH': 0.0, 'BTC': 0.0024, 'USD': 0.0, 'LTC': 0.0, 'BCH': 0.0} # Test
         print("Account: {}".format(account_dict))
         current_account_value = get_account_value_usd(account_dict, wsClient)
         print("Current value: {}".format(current_account_value))
@@ -263,7 +266,7 @@ def run():
             # make_trade(base_coin, number, next_coin, price, wsClient, auth_client)
             make_trade(base_coin, number, next_coin, price, wsClient)
 
-        time.sleep(1)
+        time.sleep(10)
         # auth_client.cancel_all()
     wsClient.close()
 
