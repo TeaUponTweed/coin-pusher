@@ -4,6 +4,7 @@ import gdax
 from itertools import tee
 import json
 import time
+import math
 
 loops = {
         "USD" : [
@@ -141,21 +142,6 @@ def next_move(starting_with, number, wsClient, volume_map, product_list):
     else:
         return None, None, None
 
-def make_trade(base_coin, number, next_coin, price, wsClient, auth_client = None):
-    # "FYI, you will never be charged a fee if you use the post_only option with limit orders" (I found this quote on gdax discussion)
-    trade = '{}-{}'.format(base_coin, next_coin)
-    if trade in wsClient.products:
-        corrected_number = (number // coin_increments[base_coin]) * coin_increments[base_coin]
-        print("Sell {} {} at {}".format(corrected_number, trade, price))
-        if auth_client:
-            print(auth_client.sell(price=price, size=corrected_number, product_id=trade, post_only=True, time_in_force="GTC")) # Candel order after 1 minute
-    else:
-        next_number = number / price
-        corrected_next_number = (next_number // coin_increments[next_coin]) * coin_increments[next_coin]
-        trade = '{}-{}'.format(next_coin, base_coin)
-        print("Buy {} {} at {}".format(corrected_next_number, trade, price))
-        if auth_client:
-            print(auth_client.buy(price=price, size=corrected_next_number, product_id=trade, post_only=True, time_in_force="GTC")) # Cancel order after 1 minute
 
 def get_api_credentials(api_credential_file = 'api_credentials.json', sandbox = False):
     with open(api_credential_file) as api_json:
@@ -174,23 +160,9 @@ def get_api_credentials(api_credential_file = 'api_credentials.json', sandbox = 
 
     return api_key, api_secret, api_passphrase
 
-def get_account_value_usd(account_dict, wsClient):
-    # account_dict = {'ETH': 1.5, 'BTC': 0.05, 'USD': 1000.0, 'LTC': 3.0, 'BCH': 0.5}
-    total = 0.0
-    for currency, amount in account_dict.items():
-        if currency == "USD":
-            total += amount
-        elif currency in all_coins:
-            currency_pair = '{}-USD'.format(currency)
-            price, _ = wsClient.get_ask(currency_pair)
-            total += price * amount
-    return total
-
 class newWebsocket(gdax.WebsocketClient):
     def on_open(self):
         self.order_book_map = {k:gdax.OrderBook(product_id=k) for k in self.products}
-        # self.order_book_btc = gdax.OrderBook(product_id='BTC-USD')
-        # self.order_book_eth = gdax.OrderBook(product_id='ETH-USD')
 
     def on_message(self, msg):
         product_id = msg.get('product_id')
@@ -199,8 +171,6 @@ class newWebsocket(gdax.WebsocketClient):
             # print("{} message received!".format(product_id))
         else:
             print("Unexpected product in message: {}".format(product_id))
-        # self.order_book_btc.process_message(msg)
-        # self.order_book_eth.process_message(msg)
 
     def get_bid(self, product_id):
         if product_id in self.products:
@@ -232,13 +202,135 @@ class newWebsocket(gdax.WebsocketClient):
         else:
             print("Unexpected product in message: {}".format(product_id))
 
+class OrderManager:
+    """
+    Object that manages past orders so new orders can be compared against existing orders and specific orders can be cancelled
+
+    Notes:
+    -----
+    "A successful order will be assigned an order id" (from gdax api docs)
+
+    Example Order Responses:
+    ------------------------
+    {'id': '3cbea448-fdba-40c7-9161-ab97d032d859', 'price': '285.05000000', 'size': '0.14000000', 'product_id': 'LTC-USD', 'side': 'buy', 'stp': 'dc', 'type': 'limit', 'time_in_force': 'GTC', 'post_only': True, 'created_at': '2018-01-07T05:03:19.867218Z', 'fill_fees': '0.0000000000000000', 'filled_size': '0.00000000', 'executed_value': '0.0000000000000000', 'status': 'pending', 'settled': False}
+    {'message': 'size required'}
+    {'message': 'size too precise (0.038450615867888595)'}
+    {'message': 'Insufficient funds'}
+    {'message': 'Order size is too small. Minimum size is 0.01'}
+    {'message': 'invalid cancel_after (1,0,0)'}
+    """
+
+    def __init__(self, wsClient, auth_client = None):
+        self.wsClient = wsClient
+        self.auth_client = auth_client
+        self.outstanding_trades = {}
+
+    def get_account_dict(self):
+        account_dict = {}
+        if self.auth_client:
+            account_dict = {account['currency']:float(account['available']) for account in self.auth_client.get_accounts()}
+        else:
+            account_dict = {'ETH': 1.5, 'BTC': 0.05, 'USD': 1000.0, 'LTC': 3.0, 'BCH': 0.5} # TODO: Make this "test account" param configurable?
+        print("Account: {}".format(account_dict))
+        return account_dict
+
+    def get_account_value_usd(self):
+        total = 0.0
+        for currency, amount in self.get_account_dict().items():
+            if currency == "USD":
+                total += amount
+            elif currency in all_coins:
+                currency_pair = '{}-USD'.format(currency)
+                price, _ = self.wsClient.get_ask(currency_pair)
+                total += price * amount
+        return total
+
+    def _handle_response(self, response):
+        if {'id', 'price', 'size', 'product_id', 'side'} <= set(response):
+            trade = response['product_id']
+            price = response['price']
+            size = response['size']
+            side = response['side']
+            trade_id = response['id']
+
+            currency = trade[0:3] if side == "sell" else trade[4:7]
+
+            self.outstanding_trades[currency] = {'trade': trade, 'size': size, 'price': price, "trade_id": trade_id}
+            print(self.outstanding_trades)
+        else:
+            if 'message' in response:
+                print(response['message'])
+            else:
+                print("unexpected response: {}".format(response))
+
+    def _trade_on_book(self, base_currency, trade, size, price):
+        if base_currency in self.outstanding_trades:
+            last_trade = self.outstanding_trades[base_currency]
+            if last_trade['trade'] == trade and math.isclose(float(last_trade['size']),size) and math.isclose(float(last_trade['price']),price):
+                return "Same trade"
+            else:
+                return "Different trade"
+        return "No trade"
+
+    def post_trade(self, base_coin, base_number, next_coin, price):
+        # "FYI, you will never be charged a fee if you use the post_only option with limit orders" (I found this quote on gdax discussion)
+        trade = '{}-{}'.format(base_coin, next_coin)
+        if trade in self.wsClient.products:
+            corrected_number = (base_number // coin_increments[base_coin]) * coin_increments[base_coin]
+            print("Sell {0:.6f} {1} at {2}".format(corrected_number, trade, price))
+
+            if self.auth_client:
+                prev_trade = self._trade_on_book(base_coin, trade, corrected_number, price)
+                if  prev_trade == "No trade":
+                    print("No trade already on books")
+                if  prev_trade == "Same trade":
+                    print("Trade already on books")
+                if prev_trade == "Different trade":
+                    currency = trade[0:3]
+                    trade_id = self.outstanding_trades[currency]['trade_id']
+                    self.cancel_trade(trade_id)
+                    print("Canceling previous order")
+                post_response = self.auth_client.sell(price=price, size="{0:.6f}".format(corrected_number), product_id=trade, post_only=True, time_in_force="GTC") # TODO: Make cancel behavior param configurable
+                print(post_response)
+                self._handle_response(post_response)
+        else:
+            next_number = base_number / price
+            corrected_next_number = (next_number // coin_increments[next_coin]) * coin_increments[next_coin]
+            trade = '{}-{}'.format(next_coin, base_coin)
+            print("Buy {0:0.6f} {1} at {2}".format(corrected_next_number, trade, price))
+
+            if self.auth_client:
+                prev_trade = self._trade_on_book(base_coin, trade, corrected_next_number, price)
+                if  prev_trade == "No trade":
+                    print("No trade already on books")
+                if  prev_trade == "Same trade":
+                    print("Trade already on books")
+                if prev_trade == "Different trade":
+                    currency = trade[4:7]
+                    trade_id = self.outstanding_trades[currency]['trade_id']
+                    self.cancel_trade(trade_id)
+                    print("Canceling previous order")
+                post_response = self.auth_client.buy(price=price, size="{0:.6f}".format(corrected_next_number), product_id=trade, post_only=True, time_in_force="GTC") # TODO: Make cancel behavior param configurable
+                print(post_response)
+                self._handle_response(post_response)
+
+    def cancel_trade(self, trade_id):
+        resp = self.auth_client.cancel_order(trade_id)
+        print(resp)
+
+    def cancel_all_trades(self):
+        print("Cancelling all trades!")
+        if self.auth_client:
+            self.auth_client.cancel_all()
+
 def run():
 
     # auth_client = gdax.AuthenticatedClient(*get_api_credentials())
+    auth_client = None
     public_client = gdax.PublicClient()
     wsClient = newWebsocket(products = ["BTC-USD","ETH-USD","LTC-USD","ETH-BTC","LTC-BTC"])
     wsClient.start()
-    # products = public_client.get_products()
+    order_manager = OrderManager(wsClient, auth_client)
 
     # coin_increments = public_client.get_product_increments() # TODO: this call doesn't exist, but I'd like to do it programmatically
 
@@ -247,27 +339,23 @@ def run():
     time.sleep(10)
 
     for _ in range(5):
-        # account_dict = {account['currency']:float(account['available']) for account in auth_client.get_accounts()}
-        account_dict = {'ETH': 1.5, 'BTC': 0.05, 'USD': 1000.0, 'LTC': 3.0, 'BCH': 0.5} # Test
-        # account_dict = {'ETH': 0.0, 'BTC': 0.0024, 'USD': 0.0, 'LTC': 0.0, 'BCH': 0.0} # Test
-        print("Account: {}".format(account_dict))
-        current_account_value = get_account_value_usd(account_dict, wsClient)
+        current_account_value = order_manager.get_account_value_usd()
         print("Current value: {}".format(current_account_value))
 
         next_trades = []
 
-        for coin, number in account_dict.items():
+        for coin, number in order_manager.get_account_dict().items():
             if coin in all_coins and number >= coin_increments[coin]:
                 next_step, profit, price = next_move(coin, number, wsClient, volume_map, product_list)
                 if next_step:
                     next_trades.append((coin, number, next_step, price))
 
         for base_coin, number, next_coin, price in next_trades:
-            # make_trade(base_coin, number, next_coin, price, wsClient, auth_client)
-            make_trade(base_coin, number, next_coin, price, wsClient)
+            order_manager.post_trade(base_coin, number, next_coin, price)
 
-        time.sleep(10)
-        # auth_client.cancel_all()
+        time.sleep(1)
+        print("")
+    order_manager.cancel_all_trades()
     wsClient.close()
 
 if __name__ == "__main__":
