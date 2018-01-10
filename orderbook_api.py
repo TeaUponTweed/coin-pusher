@@ -119,7 +119,7 @@ def loop_profit(loop, base_number, wsClient, volume_map):
         loop_time += trade_time
         intermediate_number = trade_number
     trade_value = (loop_arbitrage - 1) / loop_time
-    print("loop: {}, loop_arbitrage: {}, time: {} -> value: {}".format(loop, loop_arbitrage, loop_time, trade_value * 1e6))
+    # print("loop: {}, loop_arbitrage: {}, time: {} -> value: {}".format(loop, loop_arbitrage, loop_time, trade_value * 1e6))
     return trade_value, price
 
 def make_volume_map(products, public_client):
@@ -243,7 +243,7 @@ class OrderManager:
 
     def get_account_value_usd(self):
         total = 0.0
-        for currency, amount in self.get_account_dict().items():
+        for currency, amount in [*self.get_account_dict().items(), *[(trade['currency'], float(trade['size'])) for trade in self.outstanding_trades.values()]] :
             if currency == "USD":
                 total += amount
             elif currency in all_coins:
@@ -263,8 +263,7 @@ class OrderManager:
             currency = trade[0:3] if side == "sell" else trade[4:7]
 
             self.outstanding_trades[trade_id] = {'trade': trade, 'size': size, 'price': price, 'currency': currency}
-            self.wsClient.myTrades.add(trade_id)
-            print(self.outstanding_trades)
+            # print(self.outstanding_trades)
         else:
             if 'message' in response:
                 print(response['message'])
@@ -273,14 +272,15 @@ class OrderManager:
 
     def _trade_on_book(self, base_currency, trade, size, price):
         last_trades = [trade for trade in self.outstanding_trades.values() if base_currency == trade['currency']]
-        if last_trades:
-            if any(last_trade['trade'] == trade and math.isclose(float(last_trade['size']),size) and math.isclose(float(last_trade['price']),price) for last_trade in last_trades):
-                return "Same trade"
-            elif all(last_trade['trade'] == trade and math.isclose(float(last_trade['price']),price) for last_trade in last_trades):
-                return "Same price"
+        same_trades, same_price, other = [], [], []
+        for last_trade in last_trades:
+            if last_trade['trade'] == trade and math.isclose(float(last_trade['size']),size) and math.isclose(float(last_trade['price']),price):
+                same_trades.append(last_trade)
+            elif last_trade['trade'] == trade and math.isclose(float(last_trade['price']),price):
+                same_price.append(last_trade)
             else:
-                return "Different trade"
-        return "No trade"
+                other.append(last_trade)
+        return same_trades, same_price, other
 
     def post_trade(self, base_coin, base_number, next_coin, price):
         # "FYI, you will never be charged a fee if you use the post_only option with limit orders" (I found this quote on gdax discussion)
@@ -292,21 +292,21 @@ class OrderManager:
             print("Sell {0:.6f} {1} at {2}".format(corrected_number, trade, price))
 
             if self.auth_client:
-                prev_trade = self._trade_on_book(base_coin, trade, corrected_number, price)
-                if  prev_trade == "No trade":
+                same_trades, same_price, other = self._trade_on_book(base_coin, trade, corrected_number, price)
+                if not any((same_trades, same_price, other)):
                     print("No trade already on books")
-                elif  prev_trade == "Same trade":
+                if other:
+                    for outstanding_trade in other:
+                        trade_id = outstanding_trade['trade_id']
+                        self.cancel_trade(trade_id)
+                        print("Canceling previous order {}".format(trade_id))
+                if same_trades:
                     print("Trade already on books")
                     return
-                elif prev_trade == "Same price":
+                if same_price:
                     print("Add another order at this price")
-                elif prev_trade == "Different trade":
-                    currency = trade[0:3]
-                    trade_id = self.outstanding_trades[currency]['trade_id']
-                    self.cancel_trade(trade_id)
-                    print("Canceling previous order")
                 post_response = self.auth_client.sell(price=price, size="{0:.6f}".format(corrected_number), product_id=trade, post_only=True, time_in_force="GTC") # TODO: Make cancel behavior param configurable
-                print(post_response)
+                # print(post_response)
                 self._handle_response(post_response)
         else:
             next_number = base_number / price
@@ -356,7 +356,7 @@ def run():
 
         time.sleep(10)
 
-        for _ in range(5):
+        for _ in range(10000):
             current_account_value = order_manager.get_account_value_usd()
             print("Current value: {}".format(current_account_value))
 
@@ -371,7 +371,7 @@ def run():
             for base_coin, number, next_coin, price in next_trades:
                 order_manager.post_trade(base_coin, number, next_coin, price)
 
-            time.sleep(1)
+            time.sleep(0.1)
             print("")
     finally:
         order_manager.cancel_all_trades()
