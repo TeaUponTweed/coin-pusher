@@ -1,14 +1,16 @@
 ## TODO
-* Not attempting orders that are possbile 
-* Take into account outstanding trades when calculating account value
+* M/E - Not attempting orders that are not possbile 
+* M/M - Take into account outstanding trades when calculating account value
     * re-evaluate loops with outstanding trades
-* implement logging system
-* don't attempt to post duplicate trades
-* don't cancel other trades at same price
-* monitor when trades are made
-* clean up user input
-* float vs decimal formatting (round vs truncation)
-* better velocity calculator
-* create arbitrage object
-* start using params file
-* calculate loops programatically
+* L/E - implement logging system
+* M/E - don't attempt to post duplicate trades
+* M/M - don't cancel other trades at same price
+* M/H - monitor when trades are completed
+    * get a user specific websocket
+* L/E - clean up user output
+* L/H - Make nice UI
+* M/M - float vs decimal formatting (round vs truncation)
+* L/H - better velocity calculator
+* L/M - create arbitrage object
+* L/E - start using params file
+* L/E - calculate loops programatically
