@@ -161,11 +161,18 @@ def get_api_credentials(api_credential_file = 'api_credentials.json', sandbox = 
     return api_key, api_secret, api_passphrase
 
 class newWebsocket(gdax.WebsocketClient):
+
+    myTrades = None
+
     def on_open(self):
         self.order_book_map = {k:gdax.OrderBook(product_id=k) for k in self.products}
 
     def on_message(self, msg):
+        # {'type': 'done', 'side': 'sell', 'order_id': '7ebcaf46-c0d7-47ea-8c06-cd5221e205c3', 'reason': 'filled', 'product_id': 'BTC-USD', 'price': '14292.49000000', 'remaining_size': '0.00000000', 'sequence': 4823523105, 'time': '2018-01-10T03:39:24.776000Z'}
         product_id = msg.get('product_id')
+        if msg.get('type') == 'done' and msg.get('reason') == 'filled':
+            newWebsocket.myTrades.pop(msg['order_id'], None)
+
         if product_id in self.products:
             self.order_book_map[product_id].process_message(msg)
             # print("{} message received!".format(product_id))
@@ -224,7 +231,7 @@ class OrderManager:
         self.wsClient = wsClient
         self.auth_client = auth_client
         self.outstanding_trades = {}
-
+        newWebsocket.myTrades = self.outstanding_trades
     def get_account_dict(self):
         account_dict = {}
         if self.auth_client:
@@ -255,7 +262,8 @@ class OrderManager:
 
             currency = trade[0:3] if side == "sell" else trade[4:7]
 
-            self.outstanding_trades[currency] = {'trade': trade, 'size': size, 'price': price, "trade_id": trade_id}
+            self.outstanding_trades[trade_id] = {'trade': trade, 'size': size, 'price': price, 'currency': currency}
+            self.wsClient.myTrades.add(trade_id)
             print(self.outstanding_trades)
         else:
             if 'message' in response:
@@ -264,10 +272,12 @@ class OrderManager:
                 print("unexpected response: {}".format(response))
 
     def _trade_on_book(self, base_currency, trade, size, price):
-        if base_currency in self.outstanding_trades:
-            last_trade = self.outstanding_trades[base_currency]
-            if last_trade['trade'] == trade and math.isclose(float(last_trade['size']),size) and math.isclose(float(last_trade['price']),price):
+        last_trades = [trade for trade in self.outstanding_trades.values() if base_currency == trade['currency']]
+        if last_trades:
+            if any(last_trade['trade'] == trade and math.isclose(float(last_trade['size']),size) and math.isclose(float(last_trade['price']),price) for last_trade in last_trades):
                 return "Same trade"
+            elif all(last_trade['trade'] == trade and math.isclose(float(last_trade['price']),price) for last_trade in last_trades):
+                return "Same price"
             else:
                 return "Different trade"
         return "No trade"
@@ -277,15 +287,20 @@ class OrderManager:
         trade = '{}-{}'.format(base_coin, next_coin)
         if trade in self.wsClient.products:
             corrected_number = (base_number // coin_increments[base_coin]) * coin_increments[base_coin]
+            if corrected_number == 0.0:
+                return
             print("Sell {0:.6f} {1} at {2}".format(corrected_number, trade, price))
 
             if self.auth_client:
                 prev_trade = self._trade_on_book(base_coin, trade, corrected_number, price)
                 if  prev_trade == "No trade":
                     print("No trade already on books")
-                if  prev_trade == "Same trade":
+                elif  prev_trade == "Same trade":
                     print("Trade already on books")
-                if prev_trade == "Different trade":
+                    return
+                elif prev_trade == "Same price":
+                    print("Add another order at this price")
+                elif prev_trade == "Different trade":
                     currency = trade[0:3]
                     trade_id = self.outstanding_trades[currency]['trade_id']
                     self.cancel_trade(trade_id)
@@ -296,6 +311,8 @@ class OrderManager:
         else:
             next_number = base_number / price
             corrected_next_number = (next_number // coin_increments[next_coin]) * coin_increments[next_coin]
+            if corrected_next_number == 0.0:
+                return
             trade = '{}-{}'.format(next_coin, base_coin)
             print("Buy {0:0.6f} {1} at {2}".format(corrected_next_number, trade, price))
 
@@ -325,38 +342,40 @@ class OrderManager:
 
 def run():
 
-    # auth_client = gdax.AuthenticatedClient(*get_api_credentials())
-    auth_client = None
-    public_client = gdax.PublicClient()
-    wsClient = newWebsocket(products = ["BTC-USD","ETH-USD","LTC-USD","ETH-BTC","LTC-BTC"])
-    wsClient.start()
-    order_manager = OrderManager(wsClient, auth_client)
+    try:
+        auth_client = gdax.AuthenticatedClient(*get_api_credentials())
+        # auth_client = None
+        public_client = gdax.PublicClient()
+        wsClient = newWebsocket(products = ["BTC-USD","ETH-USD","LTC-USD","ETH-BTC","LTC-BTC"])
+        wsClient.start()
+        order_manager = OrderManager(wsClient, auth_client)
 
-    # coin_increments = public_client.get_product_increments() # TODO: this call doesn't exist, but I'd like to do it programmatically
+        # coin_increments = public_client.get_product_increments() # TODO: this call doesn't exist, but I'd like to do it programmatically
 
-    volume_map = make_volume_map(wsClient.products, public_client)
+        volume_map = make_volume_map(wsClient.products, public_client)
 
-    time.sleep(10)
+        time.sleep(10)
 
-    for _ in range(5):
-        current_account_value = order_manager.get_account_value_usd()
-        print("Current value: {}".format(current_account_value))
+        for _ in range(5):
+            current_account_value = order_manager.get_account_value_usd()
+            print("Current value: {}".format(current_account_value))
 
-        next_trades = []
+            next_trades = []
 
-        for coin, number in order_manager.get_account_dict().items():
-            if coin in all_coins and number >= coin_increments[coin]:
-                next_step, profit, price = next_move(coin, number, wsClient, volume_map, product_list)
-                if next_step:
-                    next_trades.append((coin, number, next_step, price))
+            for coin, number in order_manager.get_account_dict().items():
+                if coin in all_coins and number >= coin_increments[coin]:
+                    next_step, profit, price = next_move(coin, number, wsClient, volume_map, product_list)
+                    if next_step:
+                        next_trades.append((coin, number, next_step, price))
 
-        for base_coin, number, next_coin, price in next_trades:
-            order_manager.post_trade(base_coin, number, next_coin, price)
+            for base_coin, number, next_coin, price in next_trades:
+                order_manager.post_trade(base_coin, number, next_coin, price)
 
-        time.sleep(1)
-        print("")
-    order_manager.cancel_all_trades()
-    wsClient.close()
+            time.sleep(1)
+            print("")
+    finally:
+        order_manager.cancel_all_trades()
+        wsClient.close()
 
 if __name__ == "__main__":
     run()
