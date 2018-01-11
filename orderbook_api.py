@@ -238,18 +238,32 @@ class OrderManager:
             account_dict = {account['currency']:float(account['available']) for account in self.auth_client.get_accounts()}
         else:
             account_dict = {'ETH': 1.5, 'BTC': 0.05, 'USD': 1000.0, 'LTC': 3.0, 'BCH': 0.5} # TODO: Make this "test account" param configurable?
-        print("Account: {}".format(account_dict))
+        # print("Account: {}".format(account_dict))
         return account_dict
 
     def get_account_value_usd(self):
         total = 0.0
-        for currency, amount in [*self.get_account_dict().items(), *[(trade['currency'], float(trade['size'])) for trade in self.outstanding_trades.values()]] :
+        # for currency, amount in [*self.get_account_dict().items(), *[(trade['currency'], float(trade['size'])) for trade in self.outstanding_trades.values()]] :
+        for currency, amount in self.get_account_dict().items():
             if currency == "USD":
                 total += amount
             elif currency in all_coins:
                 currency_pair = '{}-USD'.format(currency)
                 price, _ = self.wsClient.get_ask(currency_pair)
                 total += price * amount
+        for outstanding_trade in self.outstanding_trades.values():
+            trade = outstanding_trade["trade"]
+            size = float(outstanding_trade["size"])
+            price = float(outstanding_trade["price"])
+            currency = outstanding_trade["currency"]
+            if currency == "USD" or trade[4:7] == "USD":
+                total += size*price
+            else:
+                next_currency = trade[4:7]
+                currency_pair = '{}-USD'.format(next_currency)
+                next_price, _ = self.wsClient.get_ask(currency_pair)
+                amount = size*price
+                total += next_price * amount
         return total
 
     def _handle_response(self, response):
@@ -263,7 +277,7 @@ class OrderManager:
             currency = trade[0:3] if side == "sell" else trade[4:7]
 
             self.outstanding_trades[trade_id] = {'trade': trade, 'size': size, 'price': price, 'currency': currency}
-            # print(self.outstanding_trades)
+            print(self.outstanding_trades)
         else:
             if 'message' in response:
                 print(response['message'])
