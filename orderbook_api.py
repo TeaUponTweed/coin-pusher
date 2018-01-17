@@ -286,6 +286,8 @@ class OrderManager:
 
     def _trade_on_book(self, base_currency, trade, size, price):
         last_trades = [trade for trade in self.outstanding_trades.values() if base_currency == trade['currency']]
+        print("trade: {}, size {}, price{}".format(trade,size,price))
+        print(last_trades)
         same_trades, same_price, other = [], [], []
         for last_trade in last_trades:
             if last_trade['trade'] == trade and math.isclose(float(last_trade['size']),size) and math.isclose(float(last_trade['price']),price):
@@ -311,8 +313,10 @@ class OrderManager:
                     print("No trade already on books")
                 if other:
                     for outstanding_trade in other:
-                        trade_id = outstanding_trade['trade_id']
-                        self.cancel_trade(trade_id)
+                        print("### outstanding trade: {}".format(outstanding_trade))
+                        for trade_id, trade_vals in self.outstanding_trades.items():
+                            if trade_vals == outstanding_trade:
+                                self.cancel_trade(trade_id)
                         print("Canceling previous order {}".format(trade_id))
                 if same_trades:
                     print("Trade already on books")
@@ -357,8 +361,8 @@ class OrderManager:
 def run():
 
     try:
-        auth_client = gdax.AuthenticatedClient(*get_api_credentials())
-        # auth_client = None
+        # auth_client = gdax.AuthenticatedClient(*get_api_credentials())
+        auth_client = None
         public_client = gdax.PublicClient()
         wsClient = newWebsocket(products = ["BTC-USD","ETH-USD","LTC-USD","ETH-BTC","LTC-BTC"])
         wsClient.start()
@@ -376,11 +380,21 @@ def run():
 
             next_trades = []
 
+            # Find trades for current available currency
             for coin, number in order_manager.get_account_dict().items():
                 if coin in all_coins and number >= coin_increments[coin]:
                     next_step, profit, price = next_move(coin, number, wsClient, volume_map, product_list)
                     if next_step:
                         next_trades.append((coin, number, next_step, price))
+
+            # Evaluate existing trades for better options
+            for trade_id, trade_vals in order_manager.outstanding_trades.items():
+                # {'trade': trade, 'size': size, 'price': price, 'currency': currency}
+                currency = trade_vals['currency']
+                volume = trade_vals['size'] if trade_vals['trade'][0:4] == currency else float(trade_vals['size'])*float(trade_vals['price'])
+                next_step, profit, price = next_move(currency, volume, wsClient, volume_map, product_list)
+                if next_step:
+                    next_trades.append((currency, volume, next_step, price))
 
             for base_coin, number, next_coin, price in next_trades:
                 order_manager.post_trade(base_coin, number, next_coin, price)
