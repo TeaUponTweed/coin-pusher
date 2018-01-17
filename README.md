@@ -1,5 +1,6 @@
 ## TODO
-* M/E - Not attempting orders that are not possbile 
+<!-- * M/E - Not attempting orders that are not possbile  -->
+* Dont evaluate loops that are invalid due to volume
 * M/M - Take into account outstanding trades when calculating account value
     * re-evaluate loops with outstanding trades
 * L/E - implement logging system
