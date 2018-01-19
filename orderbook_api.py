@@ -5,6 +5,7 @@ from itertools import tee
 import json
 import time
 import math
+from pathlib import Path
 
 loops = {
         "USD" : [
@@ -143,7 +144,7 @@ def next_move(starting_with, number, wsClient, volume_map, product_list):
         return None, None, None
 
 
-def get_api_credentials(api_credential_file = 'api_credentials.json', sandbox = False):
+def get_api_credentials(api_credential_file = str(Path.home())+'/gdax_api_credentials.json', sandbox = False):
     with open(api_credential_file) as api_json:
         api_dict = json.load(api_json)
 

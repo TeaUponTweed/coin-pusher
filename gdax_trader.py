@@ -3,6 +3,7 @@
 import json
 import collections
 from typing import List, Dict, NamedTuple, NewType
+from pathlib import Path
 
 import gdax
 
@@ -51,7 +52,7 @@ def get_trade_side(trade: Trade) -> Side:
 def make_ticker(quote_currency: Currency, base_currency: Currency):
     return quote_currency + '-' + base_currency
 
-def get_api_credentials(api_credential_file: File = 'api_credentials.json', sandbox: bool  = False) -> APICredentials:
+def get_api_credentials(api_credential_file: File = str(Path.home())+'/gdax_api_credentials.json', sandbox: bool  = False) -> APICredentials:
     with open(api_credential_file) as api_json:
         api_dict = json.load(api_json)
 
