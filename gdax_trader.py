@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 
 import json
-import collections
-from typing import List, Dict, NamedTuple, NewType
+# import collections
+from typing import List, Dict, NamedTuple
 from pathlib import Path
 
 import gdax
@@ -17,6 +17,7 @@ Time = str
 Credential = str
 File = str
 
+
 class Trade(NamedTuple):
     trade_id: TradeID
     ticker: Ticker
@@ -25,17 +26,20 @@ class Trade(NamedTuple):
     price: Price
     time: Time
 
+
 class TradeCurrencies(NamedTuple):
     base_currency: Currency
     quote_currency: Currency
+
 
 class APICredentials(NamedTuple):
     key: Credential
     b64secret: Credential
     passphrase: Credential
 
-Trades = NewType('Trade', List[Trade])
-Wallet = NewType('Wallet', Dict[Currency, Amount])
+
+Trades = List[Trade]
+Wallet = Dict[Currency, Amount]
 
 
 def get_currencies_from_ticker(ticker: Ticker) -> TradeCurrencies:
@@ -43,16 +47,21 @@ def get_currencies_from_ticker(ticker: Ticker) -> TradeCurrencies:
     quote_currency = ticker[4:7]
     return TradeCurrencies(base_currency, quote_currency)
 
+
 def get_held_currency_from_side(ticker: Ticker, side: Side) -> Currency:
     return ticker[0:3] if side == 'sell' else ticker[4:7]
+
 
 def get_trade_side(trade: Trade) -> Side:
     return 'sell' if trade.held_currency == trade.ticker[0:3] else 'buy' 
 
+
 def make_ticker(quote_currency: Currency, base_currency: Currency):
     return quote_currency + '-' + base_currency
 
-def get_api_credentials(api_credential_file: File = str(Path.home())+'/gdax_api_credentials.json', sandbox: bool  = False) -> APICredentials:
+
+def get_api_credentials(api_credential_file: File = str(Path.home())+'/gdax_api_credentials.json',
+                        sandbox: bool = False) -> APICredentials:
     with open(api_credential_file) as api_json:
         api_dict = json.load(api_json)
 
@@ -60,32 +69,33 @@ def get_api_credentials(api_credential_file: File = str(Path.home())+'/gdax_api_
 
     return APICredentials(exchange['key'], exchange['b64secret'], exchange['passphrase'])
 
+
 class GdaxAccount:
 
     def __init__(self, credentials: APICredentials) -> None:
         self.auth_client = gdax.AuthenticatedClient(*credentials) if credentials else None
-        self.wallet = {} # I want this to be 'Wallet()' but that doesn't work
-        self.trades = [] # I want this to be 'Trades()' but that doesn't work
+        self.wallet = self._initialize_wallet()
+        self.trades = self._initialize_trades()
 
     def _initialize_wallet(self) -> Wallet:
-        '''
+        """
         Return amount available of each currency in wallet
-        '''
-        wallet = Wallet()
-        if auth_client:
+        """
+        wallet = {}
+        if self.auth_client:
             account_list = self.auth_client.get_accounts()
             # Add handler for api call failure
             for account in account_list:
                 currency = account['currency']
                 wallet[currency] = account['available']
-        return wallet # could add a default 'test' wallet when no auth_client in available
+        return wallet  # could add a default 'test' wallet when no auth_client in available
 
     def _initialize_trades(self) -> Trades:
-        '''
+        """
         Return outstanding trades on account
-        '''
-        oustanding_trades = Trades()
-        if auth_client:
+        """
+        outstanding_trades = list()
+        if self.auth_client:
             order_list = self.auth_client.get_orders()
             # Add handler for api call failure
             for order in order_list:
@@ -97,13 +107,15 @@ class GdaxAccount:
                 price = order['price']
                 time = order['created_at']
                 outstanding_trades.append(Trade(trade_id, ticker, held_currency, amount, price, time))
-        return oustanding_trades
+        return outstanding_trades
 
     def make_trade(self, trade: Trade) -> None:
         if get_trade_side(trade) == 'sell':
-            post_response = self.auth_client.sell(price=trade.price, size=trade.amount, product_id=ticker, post_only=True, time_in_force='GTC')
+            post_response = self.auth_client.sell(price=trade.price, size=trade.amount, product_id=trade.ticker,
+                                                  post_only=True, time_in_force='GTC')
         else:
-            post_response = self.auth_client.buy(price=trade.price, size=trade.amount, product_id=ticker, post_only=True, time_in_force='GTC')
+            post_response = self.auth_client.buy(price=trade.price, size=trade.amount, product_id=trade.ticker,
+                                                 post_only=True, time_in_force='GTC')
 
     def _get_currency_value_in_usd(self, currency: Currency, amount: float) -> float:
         if currency == 'USD':
@@ -117,7 +129,6 @@ class GdaxAccount:
         ticker = trade.ticker
         amount = trade.amount
         price = trade.price
-        held_currency = trade.held_currency
         if 'USD' in get_currencies_from_ticker(ticker):
             return amount*price
         else:
@@ -138,6 +149,7 @@ class GdaxAccount:
     def cancel_all_trades(self) -> None:
         self.auth_client.cancel_all()
 
+
 class Trader:
 
     def __init__(self) -> None:
@@ -155,6 +167,7 @@ class Trader:
     def log_account_value(self) -> None:
         print('Account value: {}'.format(self.gdax_account.get_account_value())) 
 
+
 def run():
     trader = Trader()
 
@@ -165,6 +178,7 @@ def run():
 
     trader.shutdown_trader()
     trader.log_account_value()
+
 
 if __name__ == '__main__':
     run()
