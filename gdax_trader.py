@@ -74,6 +74,7 @@ class GdaxAccount:
 
     def __init__(self, credentials: APICredentials) -> None:
         self.auth_client = gdax.AuthenticatedClient(*credentials) if credentials else None
+        self.websocket_manager = WebsocketManager(products = ["BTC-USD", "ETH-USD", "LTC-USD", "ETH-BTC", "LTC-BTC"])
         self.wallet = self._initialize_wallet()
         self.trades = self._initialize_trades()
 
@@ -99,14 +100,15 @@ class GdaxAccount:
             order_list = self.auth_client.get_orders()
             # Add handler for api call failure
             for order in order_list:
-                trade_id = order['id']
-                ticker = order['product_id']
-                side = order['side']
-                held_currency = get_held_currency_from_side(ticker, side)
-                amount = order['size']
-                price = order['price']
-                time = order['created_at']
-                outstanding_trades.append(Trade(trade_id, ticker, held_currency, amount, price, time))
+                if order:
+                    trade_id = order['id']
+                    ticker = order['product_id']
+                    side = order['side']
+                    held_currency = get_held_currency_from_side(ticker, side)
+                    amount = order['size']
+                    price = order['price']
+                    time = order['created_at']
+                    outstanding_trades.append(Trade(trade_id, ticker, held_currency, amount, price, time))
         return outstanding_trades
 
     def make_trade(self, trade: Trade) -> None:
@@ -122,7 +124,7 @@ class GdaxAccount:
             return amount
         else:
             ticker = make_ticker(currency, 'USD')
-            price, _ = self.wsClient.get_ask(ticker)
+            price, _ = self.websocket_manager.get_ask(ticker)
             return price * amount
 
     def _get_trade_value_in_usd(self, trade: Trade) -> float:
@@ -134,7 +136,7 @@ class GdaxAccount:
         else:
             _, value_currency = get_currencies_from_ticker(ticker)
             value_ticker = make_ticker(value_currency, 'USD')
-            value_price, _ = self.wsClient.get_ask(value_ticker)
+            value_price, _ = self.websocket_manager.get_ask(value_ticker)
             value_amount = amount*price
             return value_price * value_amount
 
@@ -148,6 +150,50 @@ class GdaxAccount:
 
     def cancel_all_trades(self) -> None:
         self.auth_client.cancel_all()
+
+
+class WebsocketManager(gdax.WebsocketClient):
+
+    def on_open(self):
+        self.order_book_map = {k: gdax.OrderBook(product_id=k) for k in self.products}
+
+    def on_message(self, msg):
+        product_id = msg.get('product_id')
+        if msg.get('type') == 'done' and msg.get('reason') == 'filled':
+            newWebsocket.myTrades.pop(msg['order_id'], None)
+
+        if product_id in self.products:
+            self.order_book_map[product_id].process_message(msg)
+        else:
+            print("Unexpected product in message: {}".format(product_id))
+
+    def get_bid(self, product_id):
+        if product_id in self.products:
+            try:
+                order_book = self.order_book_map[product_id]
+                price = order_book.get_bid()
+                bids = order_book.get_bids(price)
+                amount = sum(float(entry['size']) for entry in bids)
+                return float(price), amount
+            except:
+                print("Couldn't get bid")
+                return None
+        else:
+            print("Unexpected product in message: {}".format(product_id))
+
+    def get_ask(self, product_id):
+        if product_id in self.products:
+            try:
+                order_book = self.order_book_map[product_id]
+                price = order_book.get_ask()
+                asks = order_book.get_asks(price)
+                amount = sum(float(entry['size']) for entry in asks)
+                return float(price), amount
+            except:
+                print("Couldn't get ask")
+                return None
+        else:
+            print("Unexpected product in message: {}".format(product_id))
 
 
 class Trader:
