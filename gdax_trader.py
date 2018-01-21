@@ -56,6 +56,26 @@ def get_trade_result(trade: Trade, amount_remaining: float) -> Tuple[CurrencyDel
 
 
 class Trades(object):
+    def __init__(self, trades: Optional[Dict[TradeID, Trade]]=None):
+        self.trades = trades or {}
+
+    def add(self, trade: Trade):
+        assert trade.trade_id not in self.trades
+        self.trades[trade.trade_id] = trade
+
+    def replace(self, trade: Trade):
+        old_trade = self.trades[trade.trade_id]
+        assert old_trade.sequence < trade.sequence
+        self.trades[trade.trade_id] = trade
+
+    def get(self, trade_id: TradeID) -> Trade:
+        return self.trades[trade_id]
+
+    def remove(self, trade_id: TradeID):
+        return self.trades.pop(trade_id)
+
+    def __iter__(self) -> Iterable[Trade]:
+        yield from self.trades.values()
 
 Trades = List[Trade]
 Wallet = Dict[Currency, Amount]
