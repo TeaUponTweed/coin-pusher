@@ -37,6 +37,25 @@ class APICredentials(NamedTuple):
     b64secret: Credential
     passphrase: Credential
 
+class CurrencyDelta(NamedTuple):
+    currency: Currency
+    amount: Amount
+
+def get_next_currency(trade: Trade) -> Currency:
+    return trade.ticker.replece(trade.held_currency, '').replace('-', '')
+
+def get_trade_result(trade: Trade, amount_remaining: float) -> Tuple[CurrencyDelta, CurrencyDelta]:
+    trade_side = get_trade_side(trade)
+    held_delta = trade.amount - amount_remaining
+    next_delta = held_delta * trade.price
+    if trade_side == 'buy':
+        held_delta, next_delta = next_delta, held_delta
+
+    return (CurrencyDelta(trade.held_currency, held_delta),
+            CurrencyDelta(get_next_currency(trade), next_delta))
+
+
+class Trades(object):
 
 Trades = List[Trade]
 Wallet = Dict[Currency, Amount]
