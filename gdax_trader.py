@@ -16,7 +16,7 @@ Price = float
 Time = str
 Credential = str
 File = str
-
+Sequence = int
 
 class Trade(NamedTuple):
     trade_id: TradeID
@@ -25,7 +25,7 @@ class Trade(NamedTuple):
     amount: Amount
     price: Price
     time: Time
-
+    sequence: Sequence
 
 class TradeCurrencies(NamedTuple):
     base_currency: Currency
