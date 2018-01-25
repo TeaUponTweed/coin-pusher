@@ -1,6 +1,7 @@
 from bintrees import RBTree
 from decimal import Decimal
-import pickle
+# import pickle
+
 
 class OfflineOrderBook(object):
     def __init__(self, client, product_id):
@@ -13,7 +14,9 @@ class OfflineOrderBook(object):
 
     @property
     def product_id(self):
-        ''' Currently OrderBook only supports a single product even though it is stored as a list of products. '''
+        """
+        Currently OrderBook only supports a single product even though it is stored as a list of products.
+        """
         return self.products[0]
 
     def on_open(self):
@@ -72,7 +75,6 @@ class OfflineOrderBook(object):
         self.reset_book()
         print('Error: messages missing ({} - {}). Re-initializing  book at sequence.'.format(
             gap_start, gap_end, self._sequence))
-
 
     def add(self, order):
         order = {

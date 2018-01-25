@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 
-import json, os, time
+import json
+import os
+import time
 # import collections
 from typing import List, Dict, NamedTuple, Callable, Optional, Tuple, Iterable
 from pathlib import Path
@@ -20,6 +22,7 @@ Credential = str
 File = str
 Sequence = int
 
+
 class Trade(NamedTuple):
     trade_id: TradeID
     ticker: Ticker
@@ -28,6 +31,7 @@ class Trade(NamedTuple):
     price: Price
     time: Time
     sequence: Sequence
+
 
 class TradeCurrencies(NamedTuple):
     base_currency: Currency
@@ -39,12 +43,15 @@ class APICredentials(NamedTuple):
     b64secret: Credential
     passphrase: Credential
 
+
 class CurrencyDelta(NamedTuple):
     currency: Currency
     amount: Amount
 
+
 def get_next_currency(trade: Trade) -> Currency:
-    return trade.ticker.replece(trade.held_currency, '').replace('-', '')
+    return trade.ticker.replace(trade.held_currency, '').replace('-', '')
+
 
 def get_trade_result(trade: Trade, amount_remaining: float) -> Tuple[CurrencyDelta, CurrencyDelta]:
     trade_side = get_trade_side(trade)
@@ -78,6 +85,7 @@ class Trades(object):
 
     def __iter__(self) -> Iterable[Trade]:
         yield from self.trades.values()
+
 
 Wallet = Dict[Currency, Amount]
 
@@ -114,10 +122,11 @@ class GdaxAccount:
 
     def __init__(self, credentials: APICredentials) -> None:
         self.auth_client = gdax.AuthenticatedClient(*credentials) if credentials else None
-        self.websocket_manager = WebsocketManager(products = ["BTC-USD", "ETH-USD", "LTC-USD", "ETH-BTC", "LTC-BTC"])
+        self.websocket_manager = WebsocketManager(products=["BTC-USD", "ETH-USD", "LTC-USD", "ETH-BTC", "LTC-BTC"])
         self.websocket_manager.start()
         self.wallet = self._initialize_wallet()
-        self.trades = self._initialize_trades()
+
+        self._initialize_trades()
 
     def _initialize_wallet(self) -> Wallet:
         """
@@ -133,9 +142,9 @@ class GdaxAccount:
         return wallet  # could add a default 'test' wallet when no auth_client in available
 
     def _add_trade(self, order: Dict) -> None:
-        '''
+        """
         Constructs a Trade object from order and adds it to self.trades
-        '''
+        """
         trade_id = order['id']
         ticker = Ticker(order['product_id'])
         side = order['side']
@@ -145,11 +154,10 @@ class GdaxAccount:
         order_time = Time(order['created_at'])
         self.trades.add(Trade(trade_id, ticker, held_currency, amount, price, order_time, -1))
 
-
     def _process_trade_msg(self, msg: Dict) -> None:
-        '''
+        """
         processes GDAX msg and alters the internal trade object and wallet to match
-        '''
+        """
         trade_id = TradeID(msg['trade_id'])
         try:
             trade = self.trades.get(trade_id)
@@ -158,18 +166,18 @@ class GdaxAccount:
         else:
             if msg['type'] == 'done':
                 self.trades.remove(trade_id)
-                (held_currency, held_delta), (next_currency, next_delta) = get_trade_result(trade, 0)
-                # treat cancelled orders like a succesful trade back to held currency
+                (held_currency, held_delta), (next_currency, next_delta) = get_trade_result(trade, 0.0)
+                # treat cancelled orders like a successful trade back to held currency
                 if msg['reason'] == 'cancelled':
-                    next_currency, next_delta = held_delta, held_delta
+                    next_currency, next_delta = held_currency, held_delta
 
             elif msg['type'] == 'match':
-                (held_currency, held_delta), (next_currency, next_delta) = get_trade_result(trade, 0)
+                (held_currency, held_delta), (next_currency, next_delta) = get_trade_result(trade, 0.0)
                 self.trades.trades[trade_id].amount -= held_currency
 
             elif msg['type'] == 'open':
                 remaining_size = float(msg['remaining_size'])
-                (held_currency, held_delta), (next_currency, next_delta) = get_trade_result(
+                _, (next_currency, next_delta) = get_trade_result(
                     trade, remaining_size)
                 # update internal trade with new size
                 self.trades.trades[trade_id].amount = remaining_size
@@ -178,7 +186,7 @@ class GdaxAccount:
             # add currency to wallet
             self.wallet[next_currency] += next_delta
 
-    def _initialize_trades(self) -> Trades:
+    def _initialize_trades(self) -> None:
         """
         Initialize trades list with outstanding GDAX trades
         """
@@ -191,9 +199,9 @@ class GdaxAccount:
                     self._add_trade(order)
 
     def make_trade(self, trade: Trade) -> None:
-        '''
+        """
         Attempts to post trade to GDAX
-        '''
+        """
         if get_trade_side(trade) == 'sell':
             post_response = self.auth_client.sell(price=trade.price, size=trade.amount, product_id=trade.ticker,
                                                   post_only=True, time_in_force='GTC')
@@ -203,10 +211,10 @@ class GdaxAccount:
         self._handle_trade_response(post_response)
 
     def _handle_trade_response(self, response_msg: Dict) -> None:
-        '''
+        """
         Handles GDAX response to posted trade
         If trade was accepted on GDAX, add to current outstanding trades
-        '''
+        """
         if 'received' in response_msg:
             self._add_trade(response_msg)
         else:
@@ -221,8 +229,10 @@ class GdaxAccount:
             return amount
         else:
             ticker = make_ticker(currency, 'USD')
-            price, _ = self.websocket_manager.get_ask(ticker)
-            return price * amount
+            if ticker in self.websocket_manager.products:
+                price, _ = self.websocket_manager.get_ask(ticker)
+                return price * amount
+            return 0
 
     def _get_trade_value_in_usd(self, trade: Trade) -> float:
         ticker = trade.ticker
@@ -250,29 +260,28 @@ class GdaxAccount:
 
 
 class WebsocketManager(gdax.WebsocketClient):
-    '''
+    """
     Maintains order books for a list of tickers
-    can pass msgs up through msg_handlet
-    '''
-    def __init__(self, products: List[Ticker],
-                       msg_handler: Optional[Callable[[Dict], None]]=None ) -> None:
+    can pass msgs up through msg_handler
+    """
+    def __init__(self, products: List[Ticker], msg_handler: Optional[Callable[[Dict], None]]=None) -> None:
         gdax.WebsocketClient.__init__(self, products=products)
         self.msg_handler = msg_handler
 
     def on_open(self) -> None:
-        '''
+        """
         Initializes map of order books
-        '''
+        """
         # TODO test offline order book
         client = PublicClient()
         self.order_book_map = {product: OfflineOrderBook(client=client, product_id=product) for product in self.products}
 
     def on_message(self, msg: Dict) -> None:
-        '''
+        """
         Does two things:
         1. Updates internal order book for product ID
         2. Passes msg to msg_handler
-        '''
+        """
         product_id = msg.get('product_id')
         if product_id in self.products:
             self.order_book_map[product_id].process_message(msg)
@@ -283,14 +292,14 @@ class WebsocketManager(gdax.WebsocketClient):
             self.msg_handler(msg)
 
     def _get_spread(self, product_id: Ticker, do_get_bid: bool) -> Tuple[float, float]:
-        '''
+        """
         Get current bid/ask price, and quantity of currency on the books at that price
             from order book associated with product ID
-        '''
+        """
         try:
             order_book = self.order_book_map[product_id]
         except KeyError:
-            raise ValueError('Unkown product {}'.format(product_id))
+            raise ValueError('Unknown product {}'.format(product_id))
         else:
             if do_get_bid:
                 price = order_book.get_bid()
@@ -307,6 +316,7 @@ class WebsocketManager(gdax.WebsocketClient):
 
     def get_ask(self, product_id: Ticker) -> Tuple[float, float]:
         return self._get_spread(product_id, False)
+
 
 class Trader:
 
@@ -328,7 +338,7 @@ class Trader:
 
 def run():
     trader = Trader()
-    time.sleep(5)
+    time.sleep(20)
     for _ in range(100):
         trader.log_account_value()
         next_trade = trader.get_next_trade()
