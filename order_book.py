@@ -45,6 +45,7 @@ class OfflineOrderBook(object):
                 'size': Decimal(ask[1])
             })
         self._sequence = res['sequence']
+        print(self._sequence)
 
     def process_message(self, message):
         sequence = message['sequence']

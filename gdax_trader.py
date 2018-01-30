@@ -264,17 +264,22 @@ class WebsocketManager(gdax.WebsocketClient):
     Maintains order books for a list of tickers
     can pass msgs up through msg_handler
     """
-    def __init__(self, products: List[Ticker], msg_handler: Optional[Callable[[Dict], None]]=None) -> None:
+    def __init__(self, products: List[Ticker],
+                 msg_handler: Optional[Callable[[Dict], None]] = None) -> None:
         gdax.WebsocketClient.__init__(self, products=products)
         self.msg_handler = msg_handler
+        self.order_book_map = {}
 
     def on_open(self) -> None:
         """
         Initializes map of order books
         """
         # TODO test offline order book
-        client = PublicClient()
-        self.order_book_map = {product: OfflineOrderBook(client=client, product_id=product) for product in self.products}
+        for product in self.products:
+            client = PublicClient()
+            ob = OfflineOrderBook(client=client, product_id=product)
+            ob.reset_book()
+            self.order_book_map[product] = ob
 
     def on_message(self, msg: Dict) -> None:
         """
@@ -338,11 +343,15 @@ class Trader:
 
 def run():
     trader = Trader()
-    time.sleep(20)
     for _ in range(100):
+        print('STEP')
         trader.log_account_value()
         next_trade = trader.get_next_trade()
-        trader.execute_trade(next_trade)
+        if next_trade is not None:
+            trader.execute_trade(next_trade)
+        else:
+            print('No next trade')
+            time.sleep(1)
 
     trader.shutdown_trader()
     trader.log_account_value()
